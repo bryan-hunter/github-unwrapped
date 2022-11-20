@@ -1,4 +1,5 @@
 import {
+  AwsRegion,
   deployFunction,
   deploySite,
   getOrCreateBucket,
@@ -6,18 +7,14 @@ import {
 import dotenv from "dotenv";
 import path from "path";
 import { SITE_ID } from "./src/config";
-import { getAccountCount } from "./src/get-account-count";
-import { usedRegions } from "./src/regions";
-import { setEnvForKey } from "./src/set-env-for-key";
 dotenv.config();
 
-const count = getAccountCount();
-console.log(`Found ${count} accounts. Deploying...`);
+console.log(`Found 1 accounts. Deploying...`);
+
+export const usedRegions: AwsRegion[] = ['us-east-1'];
 
 const execute = async () => {
-  for (let i = 1; i <= count; i++) {
     for (const region of usedRegions) {
-      setEnvForKey(i);
       const { functionName, alreadyExisted } = await deployFunction({
         architecture: "arm64",
         createCloudWatchLogGroup: true,
@@ -28,7 +25,7 @@ const execute = async () => {
       console.log(
         `${
           alreadyExisted ? "Ensured" : "Deployed"
-        } function "${functionName}" to ${region} in account ${i}`
+        } function "${functionName}" to ${region}`
       );
       const { bucketName } = await getOrCreateBucket({ region });
       const { serveUrl } = await deploySite({
@@ -38,10 +35,9 @@ const execute = async () => {
         region,
       });
       console.log(
-        `Deployed site to ${region} in account ${i} under ${serveUrl}`
+        `Deployed site to ${region} under ${serveUrl}`
       );
     }
-  }
 };
 
 execute()

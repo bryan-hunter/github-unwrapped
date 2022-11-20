@@ -1,86 +1,90 @@
 import {
-  AwsRegion,
   getFunctions,
+  getRenderProgress,
   renderMediaOnLambda,
+  RenderMediaOnLambdaOutput,
   RenderProgress,
 } from "@remotion/lambda";
 import { RenderProgressOrFinality } from "../pages/api/progress";
 import { CompactStats } from "../remotion/map-response-to-stats";
 import { COMP_NAME, SITE_ID } from "./config";
-import {
-  Finality,
-  getRender,
-  lockRender,
-  saveRender,
-  updateRenderWithFinality,
-} from "./db/renders";
-import { getRandomAwsAccount } from "./get-random-aws-account";
-import { getRenderProgressWithFinality } from "./get-render-progress-with-finality";
-import { getRandomRegion } from "./regions";
-import { setEnvForKey } from "./set-env-for-key";
+
+export type Finality =
+  | {
+      type: "success";
+      url: string;
+    }
+  | {
+      type: "error";
+      errors: string;
+    };
 
 export const getRenderOrMake = async (
   username: string,
-  stats: CompactStats
+  statsOrRenderIdAndBucket: CompactStats | RenderMediaOnLambdaOutput,
 ): Promise<RenderProgressOrFinality> => {
-  const cache = await getRender(username);
-  let _renderId: string | null = cache?.renderId ?? null;
-  let _region: AwsRegion | null = cache?.region ?? null;
+  let _renderId: string | null = null;
+  let _bucketName: string | null = null;
   try {
-    if (cache) {
-      const progress = await getRenderProgressWithFinality(
-        cache,
-        cache.account ?? 1
-      );
-      return progress;
-    }
-    const region = getRandomRegion();
-    const account = getRandomAwsAccount();
-    setEnvForKey(account);
+    const region = 'us-east-1';
     const [first] = await getFunctions({
       compatibleOnly: true,
       region,
     });
-    console.log(`Username=${username} Account=${account} Region=${region}`);
-    await lockRender(region, username, account, first.functionName);
-
-    const { renderId, bucketName } = await renderMediaOnLambda({
-      region: region,
-      functionName: first.functionName,
-      serveUrl: SITE_ID,
-      composition: COMP_NAME,
-      inputProps: { stats: stats },
-      codec: "h264",
-      imageFormat: "jpeg",
-      maxRetries: 1,
-      privacy: "public",
-      downloadBehavior: {
-        type: "download",
-        fileName: `${username}.mp4`,
-      },
-    });
-    _renderId = renderId;
-    _region = region;
-    await saveRender({
-      region: region,
-      bucketName,
-      renderId,
-      username,
-    });
-    const render = await getRender(username);
-    if (!render) {
-      throw new Error(`Didn't have error for ${username}`);
+    console.log(`Username=${username} Region=${region}`);
+    if (!(statsOrRenderIdAndBucket as RenderMediaOnLambdaOutput).renderId) {
+      const renderMediaOnLambdaOutput = await renderMediaOnLambda({
+        region: region,
+        functionName: first.functionName,
+        serveUrl: SITE_ID,
+        composition: COMP_NAME,
+        inputProps: { stats: (statsOrRenderIdAndBucket as CompactStats) },
+        codec: "h264",
+        imageFormat: "jpeg",
+        maxRetries: 1,
+        privacy: "public",
+        downloadBehavior: {
+          type: "download",
+          fileName: `${username}.mp4`,
+        },
+      });
+      _renderId = renderMediaOnLambdaOutput.renderId;
+      _bucketName = renderMediaOnLambdaOutput.bucketName;
+    } else {
+      _renderId = (statsOrRenderIdAndBucket as RenderMediaOnLambdaOutput).renderId;
+      _bucketName = (statsOrRenderIdAndBucket as RenderMediaOnLambdaOutput).bucketName;
     }
-    const progress = await getRenderProgressWithFinality(render, account);
-    return progress;
+    const progress = await getRenderProgress({
+      renderId: _renderId,
+      bucketName: _bucketName,
+      functionName: first.functionName,
+      region: region,
+    });
+    const finality = getFinality(progress);
+
+    if (finality) {
+      return {
+        type: "finality",
+        finality,
+        renderIdAndBucket: {
+          renderId: _renderId,
+          bucketName: _bucketName,
+        },
+      };
+    }
+  
+    return {
+      type: "progress",
+      progress: {
+        percent: progress.overallProgress,
+      },
+      renderIdAndBucket: {
+        renderId: _renderId,
+        bucketName: _bucketName,
+      },
+    };
   } catch (err) {
     console.log(`Failed to render video for ${username}`, (err as Error).stack);
-    if (_renderId && _region) {
-      await updateRenderWithFinality(_renderId, username, _region, {
-        type: "error",
-        errors: (err as Error).stack as string,
-      });
-    }
     return {
       finality: {
         type: "error",

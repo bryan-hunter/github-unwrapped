@@ -1,9 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { Finality, getRender } from "../../src/db/renders";
-import { getRenderProgressWithFinality } from "../../src/get-render-progress-with-finality";
+import { Finality, getRenderOrMake } from "../../src/get-render-or-make";
 
 type RequestData = {
   username: string;
+};
+
+type RenderIdAndBucket = {
+  renderId: string,
+  bucketName: string,
 };
 
 export type RenderProgressOrFinality =
@@ -12,23 +16,20 @@ export type RenderProgressOrFinality =
       progress: {
         percent: number;
       };
+      renderIdAndBucket: RenderIdAndBucket;
     }
   | {
       type: "finality";
       finality: Finality;
+      renderIdAndBucket?: RenderIdAndBucket;
     };
 
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<RenderProgressOrFinality>
 ) {
-  const body = JSON.parse(req.body) as RequestData;
-  const render = await getRender(body.username);
-  if (!render) {
-    throw new Error("Could not get progress for ");
-  }
-
-  const prog = await getRenderProgressWithFinality(render, render.account ?? 1);
+  const body = JSON.parse(req.body) as RequestData & RenderIdAndBucket;
+  const prog = await getRenderOrMake(body.username, { renderId: body.renderId, bucketName: body.bucketName });
 
   res.status(200).json(prog);
   return;

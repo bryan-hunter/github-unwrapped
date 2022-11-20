@@ -145,13 +145,20 @@ export default function User(props: { user: CompactStats | null }) {
   const [downloadProgress, setDownloadProgress] =
     useState<RenderProgressOrFinality | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const progressRef = useRef(downloadProgress);
+  progressRef.current = downloadProgress;
 
   const pollProgress = useCallback(async () => {
     const poll = async () => {
+      if (!progressRef.current?.renderIdAndBucket?.renderId) {
+        return;
+      }
       const progress = await fetch("/api/progress", {
         method: "POST",
         body: JSON.stringify({
           username,
+          renderId: progressRef.current?.renderIdAndBucket?.renderId,
+          bucketName: progressRef.current?.renderIdAndBucket?.bucketName,
         }),
       });
       const progressJson = (await progress.json()) as RenderProgressOrFinality;
